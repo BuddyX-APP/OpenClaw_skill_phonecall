@@ -3,7 +3,7 @@
 const http = require("http");
 const https = require("https");
 const { WebSocketServer } = require("/tmp/node_modules/ws");
-const { BedrockRuntimeClient, InvokeModelCommand } = require("/tmp/node_modules/@aws-sdk/client-bedrock-runtime");
+const { BedrockRuntimeClient, ConverseCommand } = require("/tmp/node_modules/@aws-sdk/client-bedrock-runtime");
 const { TranscribeStreamingClient, StartStreamTranscriptionCommand } = require("/tmp/node_modules/@aws-sdk/client-transcribe-streaming");
 const { PollyClient, SynthesizeSpeechCommand } = require("/tmp/node_modules/@aws-sdk/client-polly");
 const fs = require("fs");
@@ -35,7 +35,7 @@ async function preloadFillers() {
   console.log("[voice] Fillers ready:", FILLERS.length);
   // Pre-generate opening based on task
   const t0 = Date.now();
-  openingText = await askHaiku([{ role: "user", content: "（電話剛接通，請自我介紹並開場）" }]);
+  openingText = await askLLM([{ role: "user", content: "（電話剛接通，請自我介紹並開場）" }]);
   openingAudio = await tts(openingText);
   console.log(`[voice] Opening ready (${Date.now() - t0}ms): ${openingText}`);
 }
@@ -130,18 +130,15 @@ async function transcribe(pcmBuffer) {
 }
 
 // Haiku for instant conversation
-async function askHaiku(history) {
-  const r = await bedrock.send(new InvokeModelCommand({
-    modelId: "us.anthropic.claude-sonnet-4-20250514-v1:0",
-    contentType: "application/json",
-    body: JSON.stringify({
-      anthropic_version: "bedrock-2023-05-31",
-      max_tokens: 200,
-      system: SYSTEM_PROMPT,
-      messages: history,
-    }),
+async function askLLM(history) {
+  const msgs = history.map(m => ({ role: m.role, content: [{ text: m.content }] }));
+  const r = await bedrock.send(new ConverseCommand({
+    modelId: "deepseek.v3.2",
+    system: [{ text: SYSTEM_PROMPT }],
+    messages: msgs,
+    inferenceConfig: { maxTokens: 200 },
   }));
-  return JSON.parse(new TextDecoder().decode(r.body)).content[0].text;
+  return r.output.message.content[0].text;
 }
 
 function waitForResponse(id, timeout = 45000) {
@@ -249,8 +246,8 @@ wss.on("connection", (ws) => {
 
                 // Ask Haiku for instant reply
                 const t0 = Date.now();
-                const reply = await askHaiku(history);
-                console.log(`[ws] Haiku (${Date.now() - t0}ms): ${reply}`);
+                const reply = await askLLM(history);
+                console.log(`[ws] LLM (${Date.now() - t0}ms): ${reply}`);
 
                 // Check if Haiku needs tools
                 const toolMatch = reply.match(/\[NEED_TOOL:\s*(.+?)\]/);
@@ -275,7 +272,7 @@ wss.on("connection", (ws) => {
 
                   // Feed OpenClaw's answer back to Haiku for natural delivery
                   history.push({ role: "user", content: `[查詢結果: ${toolReply}] 請用口語化的方式把這個結果告訴對方` });
-                  const naturalReply = await askHaiku(history);
+                  const naturalReply = await askLLM(history);
                   history.push({ role: "assistant", content: naturalReply });
                   sendAudio(ws, streamSid, await tts(naturalReply));
                 } else {
