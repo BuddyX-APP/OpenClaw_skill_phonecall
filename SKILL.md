@@ -17,10 +17,15 @@ Cloudflare tunnel 和 port-forward 已常駐在 host（systemd），你不需要
 
 ### 1. 啟動 WS server
 
+根據任務制定 Iris 的開場白，然後啟動：
+
 ```bash
-nohup node skills/phone-call/scripts/interactive_ws.cjs > /tmp/ws-server.log 2>&1 &
+nohup node skills/phone-call/scripts/interactive_ws.cjs "你好，我是宜安的助理芊芊，想跟你確認一些事情。" > /tmp/ws-server.log 2>&1 &
 echo $!
 ```
+
+開場白應該根據任務目標設計（參考 iris-persona.md 的溝通風格）。
+不傳參數則使用預設問候語。
 
 等 2 秒後確認：`cat /tmp/ws-server.log`，應看到 `[voice] Ready on port 3456`。
 
