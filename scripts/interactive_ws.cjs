@@ -22,6 +22,19 @@ const TASK = MISSION;
 const IDLE_TIMEOUT = 10 * 60 * 1000;
 let lastActivity = Date.now();
 let requestCounter = 0;
+const FILLERS = ["嗯", "對", "好的", "嗯嗯", "啊", "是"];
+let fillerAudio = []; // preloaded mulaw buffers
+
+async function preloadFillers() {
+  console.log("[voice] Preloading fillers...");
+  fillerAudio = await Promise.all(FILLERS.map(f => tts(f)));
+  console.log("[voice] Fillers ready:", FILLERS.length);
+}
+
+function playRandomFiller(ws, streamSid) {
+  const i = Math.floor(Math.random() * fillerAudio.length);
+  sendAudio(ws, streamSid, fillerAudio[i]);
+}
 
 const SYSTEM_PROMPT = `你是 Iris（芊芊），主人的助理。你正在打電話。
 角色：專業親切、知性俐落、高情商。用中文對話。
@@ -239,6 +252,7 @@ wss.on("connection", (ws) => {
             processing = true;
             pendingBargeIn = false;
             aborted = false;
+            playRandomFiller(ws, streamSid);
             try {
               const text = await transcribe(fullPcm);
               if (text.trim()) {
@@ -308,12 +322,12 @@ wss.on("connection", (ws) => {
   ws.on("close", () => console.log("[ws] Disconnected"));
 });
 
-httpServer.listen(PORT, () => {
+preloadFillers().then(() => httpServer.listen(PORT, () => {
   console.log(`[voice] Ready on port ${PORT}`);
   console.log(`[voice] Webhook: https://voice.example.com/voice`);
   console.log(`[voice] WS: wss://voice.example.com/stream`);
   console.log(`[voice] Task: ${TASK}`);
-});
+})).catch(e => { console.error("[voice] preload failed:", e.message); process.exit(1); });
 
 setInterval(() => {
   if (Date.now() - lastActivity > IDLE_TIMEOUT) {
