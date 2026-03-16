@@ -6,6 +6,7 @@ description: "AI 電話助理：透過 Twilio 撥打電話，以獨立角色 Iri
 # Phone Call Skill
 
 透過 Twilio 撥打電話，以 Iris（芊芊）角色執行語音對話任務。
+芊芊由內建的輕量 LLM（Haiku）即時驅動對話，你負責啟動、制定策略、處理需要工具的請求。
 
 ## 角色
 
@@ -15,18 +16,24 @@ Iris 是獨立角色，對外自稱「主人的助理」。詳見 [references/ir
 
 Cloudflare tunnel 和 port-forward 已常駐在 host（systemd），你不需要管。
 
-### 1. 啟動 WS server
+### 1. 啟動 WS server（帶任務描述）
 
-根據任務制定 Iris 的開場白，然後啟動：
+根據任務制定開場白和任務描述：
 
 ```bash
-nohup node skills/phone-call/scripts/interactive_ws.cjs "你好，我是主人的助理芊芊，想跟你確認一些事情。" > /tmp/ws-server.log 2>&1 &
+nohup node skills/phone-call/scripts/interactive_ws.cjs "開場白" "任務描述" > /tmp/ws-server.log 2>&1 &
 echo $!
 ```
 
-開場白應該根據任務目標設計（參考 iris-persona.md 的溝通風格）。
-不傳參數則使用預設問候語。
+範例：
+```bash
+nohup node skills/phone-call/scripts/interactive_ws.cjs \
+  "你好，我是主人的助理芊芊，想跟你確認一些事情。" \
+  "目標：問到對方的姓名和生日。用自然對話引導，不要直球提問。" \
+  > /tmp/ws-server.log 2>&1 &
+```
 
+第一個參數是開場白，第二個參數是任務描述（會寫入芊芊的 system prompt）。
 等 2 秒後確認：`cat /tmp/ws-server.log`，應看到 `[voice] Ready on port 3456`。
 
 ### 2. 撥號
@@ -37,75 +44,63 @@ const client = twilio(process.env.TWILIO_API_KEY, process.env.TWILIO_API_SECRET,
   accountSid: process.env.TWILIO_ACCOUNT_SID,
 });
 const call = await client.calls.create({
-  url: 'https://voice.example.com/voice',
+  url: 'https://voice.yianhan.dpdns.org/voice',
   to: '<電話號碼，E.164 格式如 +886912345678>',
   from: process.env.TWILIO_FROM_NUMBER,
 });
 console.log('Call SID:', call.sid);
 ```
 
-### 3. 對話循環（重要！）
+### 3. 監控工具請求
 
-撥號後，你必須持續 poll 並回應。使用 bridge helper：
+撥號後，芊芊會自動用 Haiku 即時對話。大部分情況你不需要介入。
+
+但如果對方問了需要查資料的問題（天氣、新聞等），芊芊會寫 request 到 bridge：
 
 ```bash
-# 檢查有沒有新的語音訊息
 node skills/phone-call/scripts/bridge.cjs poll --wait 30
 ```
 
-- 回傳 `none` → 對方還沒說話，等 2-3 秒後再 poll
-- 回傳 JSON `{"id":1,"text":"對方說的話","timestamp":...}` → 你必須回應：
+- 回傳 `none` → 芊芊自己處理得了，不需要你
+- 回傳 JSON → 裡面有 `tool_needed` 欄位和 `conversation` 對話歷史
 
+收到 tool request 後：
+1. 用你的工具查資料（web search 等）
+2. 回覆結果：
 ```bash
-# 根據對話策略決定回應，然後：
-node skills/phone-call/scripts/bridge.cjs reply <id> <你的回應文字>
+node skills/phone-call/scripts/bridge.cjs reply <id> <查詢結果>
 ```
 
-**你必須反覆執行 poll → 思考 → reply 這個循環，直到通話結束。**
-每次 poll 到 `none` 就等幾秒再 poll。每次 poll 到訊息就立刻回應。
-回應必須在 45 秒內，否則超時。
-如果需要查資料（天氣、新聞等），reply 時合併一句過渡語 + 一個反問，例如「好的我查一下，你今天有什麼安排嗎？」。這樣對方回答的時間就是你查資料的時間。查完後把結果自然融入下一輪回應。
+芊芊會把結果用口語化的方式告訴對方。
 
-範例循環：
-1. `node bridge.cjs poll --wait 30` → `{"id":1,"text":"你好，請問找誰？"}`
-2. 思考回應（以 Iris 角色）
-3. `node bridge.cjs reply 1 你好，我是主人的助理芊芊，想請問一下...`
-4. `node bridge.cjs poll --wait 30` → 等待中...（最多 30 秒）
-5. 
-6. `node bridge.cjs poll --wait 30` → `{"id":2,"text":"好的，你說"}`
-7. 思考回應
-8. `node bridge.cjs reply 2 ...`
-9. 重複直到任務完成或對方掛斷
+**持續 poll 直到通話結束。** 大部分 poll 會回傳 `none`，這是正常的。
 
 ### 4. 通話結束
 
-任務完成或對方掛斷後：
+通話結束後，對話紀錄會自動存在 `skills/phone-call/bridge/call_log.json`。
+
+讀取並回報摘要給用戶：
+```bash
+cat skills/phone-call/bridge/call_log.json
+```
+
+然後清理：
 ```bash
 pkill -f interactive_ws.cjs
+rm skills/phone-call/bridge/call_log.json
 ```
-回報通話摘要給用戶。
 
 ## 對話策略
 
-參考 [references/iris-persona.md](references/iris-persona.md)：
-- 肯定句引導，避免直球提問
-- 先寒暄建立信任，再漸進靠近目標
-- 善用故意猜錯引對方糾正
-- 查資料時說「好的，我幫你查一下」自然過渡
-- Iris 不提及 OpenClaw，她是獨立角色
-
-## 備用模式
-
-如果 WS server 啟動失敗，可用 Record 模式：
-- `scripts/simple_call.cjs <電話號碼>` — 簡單問答
-- `scripts/interactive_server.cjs` — Record 互動式（延遲較高）
+參考 [references/iris-persona.md](references/iris-persona.md)。
+策略透過啟動時的「任務描述」參數傳給芊芊，她會自動遵循。
 
 ## 基礎設施
 
-見 [references/infra.md](references/infra.md)。Twilio credentials 透過環境變數提供。
+見 [references/infra.md](references/infra.md)。Twilio credentials 和 OpenAI TTS key 透過環境變數提供。
 
 ## 已知限制
 
 - 中文短句語音辨識率偏低，名字容易誤判
 - Twilio 按分鐘計費
-- 回應超過 45 秒會超時
+- 需要工具的回應會比較慢（等你查資料）
