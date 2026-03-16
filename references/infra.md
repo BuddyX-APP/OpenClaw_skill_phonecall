@@ -15,7 +15,7 @@ AWS Transcribe 使用 pod 內的 AWS credentials（IAM role 或 env）。
 ## 語音合成 (TTS)
 - **服務：** OpenAI TTS
 - **Model：** tts-1
-- **Voice：** nova（年輕女聲，溫暖自然）
+- **Voice：** shimmer（柔和女聲，知性專業）
 - **輸出格式：** pcm（24kHz 16-bit，程式內降頻至 8kHz）
 
 ## 語音辨識 (STT)

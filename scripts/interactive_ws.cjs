@@ -48,7 +48,7 @@ function pcmToMulaw(pcmBuf) {
 }
 
 async function tts(text) {
-  const body = JSON.stringify({ model: "tts-1", input: text, voice: "nova", response_format: "pcm" });
+  const body = JSON.stringify({ model: "tts-1", input: text, voice: "shimmer", response_format: "pcm" });
   const buf = await new Promise((resolve, reject) => {
     const req = https.request("https://api.openai.com/v1/audio/speech", {
       method: "POST",
