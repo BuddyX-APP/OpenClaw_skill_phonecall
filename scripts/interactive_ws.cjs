@@ -181,7 +181,7 @@ wss.on("connection", (ws) => {
         audioChunks.push(pcm);
       } else if (speaking) {
         audioChunks.push(pcm);
-        if (++silenceFrames > 50) { // ~1s silence
+        if (++silenceFrames > 30) { // ~1s silence
           speaking = false;
           silenceFrames = 0;
           const fullPcm = Buffer.concat(audioChunks);
