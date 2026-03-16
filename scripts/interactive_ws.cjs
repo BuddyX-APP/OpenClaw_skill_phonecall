@@ -67,7 +67,7 @@ function pcmToMulaw(pcmBuf) {
 }
 
 async function tts(text) {
-  const body = JSON.stringify({ model: "tts-1", input: text, voice: "shimmer", response_format: "pcm" });
+  const body = JSON.stringify({ model: "tts-1", input: text, voice: "nova", response_format: "pcm" });
   const buf = await new Promise((resolve, reject) => {
     const req = https.request("https://api.openai.com/v1/audio/speech", {
       method: "POST",
@@ -182,6 +182,7 @@ wss.on("connection", (ws) => {
   let silenceFrames = 0;
   let speaking = false;
   let processing = false;
+  let pendingBargeIn = false;
   let greeted = false;
   const history = []; // conversation history for Haiku
 
@@ -201,7 +202,7 @@ wss.on("connection", (ws) => {
       }
     }
 
-    if (msg.event === "media" && !processing) {
+    if (msg.event === "media") {
       lastActivity = Date.now();
       const pcm = mulawToPcm(Buffer.from(msg.media.payload, "base64"));
 
@@ -210,18 +211,25 @@ wss.on("connection", (ws) => {
       energy /= (pcm.length / 2);
 
       if (energy > 500) {
+        // Barge-in: user started talking while we're playing TTS
+        if (processing && !pendingBargeIn) {
+          pendingBargeIn = true;
+          ws.send(JSON.stringify({ event: "clear", streamSid }));
+          console.log("[ws] Barge-in detected, clearing audio");
+        }
         speaking = true;
         silenceFrames = 0;
         audioChunks.push(pcm);
       } else if (speaking) {
         audioChunks.push(pcm);
-        if (++silenceFrames > 30) {
+        if (++silenceFrames > 20) {
           speaking = false;
           silenceFrames = 0;
           const fullPcm = Buffer.concat(audioChunks);
           audioChunks = [];
           if (fullPcm.length > 3200) {
             processing = true;
+            pendingBargeIn = false;
             try {
               const text = await transcribe(fullPcm);
               if (text.trim()) {
