@@ -1,19 +1,17 @@
 // Media Streams WebSocket server — real-time voice conversation
 const http = require("http");
+const https = require("https");
 const { WebSocketServer } = require("/tmp/node_modules/ws");
-const { PollyClient, SynthesizeSpeechCommand } = require("/tmp/node_modules/@aws-sdk/client-polly");
 const { TranscribeStreamingClient, StartStreamTranscriptionCommand } = require("/tmp/node_modules/@aws-sdk/client-transcribe-streaming");
 const fs = require("fs");
 const path = require("path");
-
-const polly = new PollyClient({ region: "us-east-1" });
 const INBOX = "/home/node/.openclaw/workspace/skills/phone-call/bridge";
 const AUDIO_DIR = "/tmp/twilio_audio";
 fs.mkdirSync(INBOX, { recursive: true });
 fs.mkdirSync(AUDIO_DIR, { recursive: true });
 
 const PORT = 3456;
-const GREETING = process.argv[2] || "你好，我是主人的助理芊芊。有什麼我可以幫你的嗎？";
+const GREETING = process.argv[2] || "你好，我是宜安的助理芊芊。有什麼我可以幫你的嗎？";
 const IDLE_TIMEOUT = 10 * 60 * 1000;
 let lastActivity = Date.now();
 let requestCounter = 0;
@@ -50,13 +48,30 @@ function pcmToMulaw(pcmBuf) {
 }
 
 async function tts(text) {
-  const r = await polly.send(new SynthesizeSpeechCommand({
-    Text: text, OutputFormat: "pcm", VoiceId: "Zhiyu", Engine: "neural",
-    LanguageCode: "cmn-CN", SampleRate: "8000",
-  }));
-  const chunks = [];
-  for await (const c of r.AudioStream) chunks.push(c);
-  return pcmToMulaw(Buffer.concat(chunks));
+  const body = JSON.stringify({ model: "tts-1", input: text, voice: "nova", response_format: "pcm" });
+  const buf = await new Promise((resolve, reject) => {
+    const req = https.request("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + process.env.OPENAI_TTS_KEY,
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+      },
+    }, (res) => {
+      const chunks = [];
+      res.on("data", c => chunks.push(c));
+      res.on("end", () => res.statusCode === 200 ? resolve(Buffer.concat(chunks)) : reject(new Error(`TTS ${res.statusCode}`)));
+      res.on("error", reject);
+    });
+    req.on("error", reject);
+    req.end(body);
+  });
+  // OpenAI returns 24kHz 16-bit PCM, downsample to 8kHz
+  const samples24 = buf.length / 2;
+  const samples8 = Math.floor(samples24 / 3);
+  const pcm8 = Buffer.alloc(samples8 * 2);
+  for (let i = 0; i < samples8; i++) pcm8.writeInt16LE(buf.readInt16LE(i * 6), i * 2);
+  return pcmToMulaw(pcm8);
 }
 
 function sendAudio(ws, streamSid, mulaw) {
@@ -116,7 +131,7 @@ const httpServer = http.createServer((req, res) => {
       lastActivity = Date.now();
       res.writeHead(200, { "Content-Type": "text/xml" });
       res.end(`<?xml version="1.0" encoding="UTF-8"?>
-<Response><Connect><Stream url="wss://voice.example.com/stream" /></Connect></Response>`);
+<Response><Connect><Stream url="wss://voice.yianhan.dpdns.org/stream" /></Connect></Response>`);
     });
     return;
   }
@@ -205,8 +220,8 @@ wss.on("connection", (ws) => {
 
 httpServer.listen(PORT, () => {
   console.log(`[voice] Ready on port ${PORT}`);
-  console.log(`[voice] Webhook: https://voice.example.com/voice`);
-  console.log(`[voice] WS: wss://voice.example.com/stream`);
+  console.log(`[voice] Webhook: https://voice.yianhan.dpdns.org/voice`);
+  console.log(`[voice] WS: wss://voice.yianhan.dpdns.org/stream`);
 });
 
 setInterval(() => {
