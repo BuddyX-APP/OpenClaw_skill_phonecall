@@ -28,6 +28,25 @@ const FILLERS = ["嗯", "對", "好的", "啊", "是"];
 let fillerAudio = []; // preloaded mulaw buffers
 let openingText = "";
 let openingAudio = null;
+const FALLBACK_OPENING = "嗨你好，我是芊芊！不好意思打擾你一下。";
+
+function sanitizeLLM(text) {
+  // Strip markdown headers, code blocks, horizontal rules, and meta-commentary
+  let clean = text
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/---+/g, "")
+    .replace(/###?\s*.*/g, "")
+    .replace(/\*\*.*?\*\*/g, "")
+    .replace(/[（(]以上是[\s\S]*?[）)]/g, "")
+    .replace(/[（(].*?助理.*?思考[\s\S]*?[）)]/g, "")
+    .replace(/\[.*?\]/g, "")
+    .trim();
+  // If result is too long (>80 chars) or empty, it's likely garbage
+  if (!clean || clean.length > 80 || clean.includes("格式") || clean.includes("範圍") || clean.includes("段落")) {
+    return "";
+  }
+  return clean;
+}
 
 async function preloadFillers() {
   console.log("[voice] Preloading fillers...");
@@ -35,7 +54,13 @@ async function preloadFillers() {
   console.log("[voice] Fillers ready:", FILLERS.length);
   // Pre-generate opening based on task
   const t0 = Date.now();
-  openingText = await askLLM([{ role: "user", content: "（電話剛接通，請自我介紹並開場）" }]);
+  try {
+    const raw = await askLLM([{ role: "user", content: "（電話剛接通，請用一句話自我介紹並開場，只要說出開場白本身，不要加任何格式或說明）" }]);
+    openingText = sanitizeLLM(raw) || FALLBACK_OPENING;
+  } catch (e) {
+    console.error("[voice] Opening LLM failed:", e.message);
+    openingText = FALLBACK_OPENING;
+  }
   openingAudio = await tts(openingText);
   console.log(`[voice] Opening ready (${Date.now() - t0}ms): ${openingText}`);
 }
@@ -247,7 +272,13 @@ wss.on("connection", (ws) => {
 
                 // Ask Haiku for instant reply
                 const t0 = Date.now();
-                const reply = await askLLM(history);
+                let reply = await askLLM(history);
+                const cleanReply = sanitizeLLM(reply);
+                if (cleanReply) reply = cleanReply;
+                // If still garbage, use a safe fallback
+                if (reply.length > 200 || reply.includes("格式") || reply.includes("段落")) {
+                  reply = "不好意思，你可以再說一次嗎？";
+                }
                 console.log(`[ws] LLM (${Date.now() - t0}ms): ${reply}`);
 
                 // Check if Haiku needs tools
