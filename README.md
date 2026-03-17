@@ -1,5 +1,7 @@
 # Phone Call Skill for OpenClaw
 
+[English](README_EN.md)
+
 AI 電話助理：透過 Twilio 撥打電話，以自訂角色進行中文語音對話。
 
 ## 功能
