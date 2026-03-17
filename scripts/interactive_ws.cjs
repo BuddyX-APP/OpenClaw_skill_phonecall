@@ -159,7 +159,7 @@ async function transcribe(pcmBuffer) {
 async function askLLM(history) {
   const msgs = history.map(m => ({ role: m.role, content: [{ text: m.content }] }));
   const r = await bedrock.send(new ConverseCommand({
-    modelId: "deepseek.v3.2",
+    modelId: "us.anthropic.claude-sonnet-4-20250514-v1:0",
     system: [{ text: SYSTEM_PROMPT }],
     messages: msgs,
     inferenceConfig: { maxTokens: 200 },
